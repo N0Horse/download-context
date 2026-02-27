@@ -249,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showInfo(_ title: String, _ message: String) {
         let alert = NSAlert()
+        alert.icon = nil
         alert.messageText = title
         alert.accessoryView = makeReadableMessageView(message)
         alert.addButton(withTitle: "OK")
@@ -257,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showError(_ code: String, _ message: String) {
         let alert = NSAlert()
+        alert.icon = nil
         alert.alertStyle = .warning
         alert.messageText = "Error [\(code)]"
         alert.accessoryView = makeReadableMessageView(message)
@@ -294,6 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showStructuredInfo(_ title: String, summary: String, sections: [ResultSection]) {
         let alert = NSAlert()
+        alert.icon = nil
         alert.messageText = title
         alert.accessoryView = makeStructuredMessageView(summary: summary, sections: sections)
         alert.addButton(withTitle: "OK")
@@ -301,91 +304,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeStructuredMessageView(summary: String, sections: [ResultSection]) -> NSView {
-        let width: CGFloat = 640
-        let height: CGFloat = 380
+        let width: CGFloat = 700
+        let height: CGFloat = 420
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        scroll.borderType = .bezelBorder
+        scroll.borderType = .noBorder
         scroll.drawsBackground = false
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: width - 16, height: 10))
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainerInset = NSSize(width: 14, height: 14)
 
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            stack.widthAnchor.constraint(equalTo: content.widthAnchor)
-        ])
+        let body = NSMutableAttributedString()
 
-        let summaryLabel = NSTextField(wrappingLabelWithString: summary)
-        summaryLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        summaryLabel.textColor = .secondaryLabelColor
-        summaryLabel.maximumNumberOfLines = 0
-        stack.addArrangedSubview(summaryLabel)
+        let summaryStyle = NSMutableParagraphStyle()
+        summaryStyle.lineBreakMode = .byWordWrapping
+        summaryStyle.paragraphSpacing = 14
+        body.append(
+            NSAttributedString(
+                string: summary + "\n",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                    .paragraphStyle: summaryStyle
+                ]
+            )
+        )
 
         for section in sections {
-            stack.addArrangedSubview(makeSectionView(section))
+            let sectionTitleStyle = NSMutableParagraphStyle()
+            sectionTitleStyle.paragraphSpacing = 10
+            body.append(
+                NSAttributedString(
+                    string: section.title + "\n",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
+                        .foregroundColor: NSColor.labelColor,
+                        .paragraphStyle: sectionTitleStyle
+                    ]
+                )
+            )
+
+            for field in section.fields where !field.value.isEmpty {
+                let fieldLabelStyle = NSMutableParagraphStyle()
+                fieldLabelStyle.paragraphSpacing = 2
+                body.append(
+                    NSAttributedString(
+                        string: field.label.uppercased() + "\n",
+                        attributes: [
+                            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                            .foregroundColor: NSColor.secondaryLabelColor,
+                            .paragraphStyle: fieldLabelStyle
+                        ]
+                    )
+                )
+
+                let valueStyle = NSMutableParagraphStyle()
+                valueStyle.lineBreakMode = .byCharWrapping
+                valueStyle.paragraphSpacing = 10
+                body.append(
+                    NSAttributedString(
+                        string: field.value + "\n",
+                        attributes: [
+                            .font: NSFont.systemFont(ofSize: 14),
+                            .foregroundColor: NSColor.labelColor,
+                            .paragraphStyle: valueStyle
+                        ]
+                    )
+                )
+            }
+
+            body.append(
+                NSAttributedString(
+                    string: "────────────────────────────────────────\n\n",
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                        .foregroundColor: NSColor.separatorColor
+                    ]
+                )
+            )
         }
 
-        scroll.documentView = content
+        textView.textStorage?.setAttributedString(body)
+
+        if let container = textView.textContainer {
+            container.widthTracksTextView = true
+            container.containerSize = NSSize(width: width - 28, height: CGFloat.greatestFiniteMagnitude)
+            container.lineFragmentPadding = 0
+            container.lineBreakMode = .byCharWrapping
+        }
+
+        scroll.documentView = textView
         return scroll
-    }
-
-    private func makeSectionView(_ section: ResultSection) -> NSView {
-        let box = NSBox()
-        box.boxType = .custom
-        box.borderWidth = 1
-        box.cornerRadius = 8
-        box.borderColor = .separatorColor
-        box.fillColor = .clear
-        box.contentViewMargins = NSSize(width: 12, height: 10)
-
-        let contentStack = NSStackView()
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 8
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleLabel = NSTextField(labelWithString: section.title)
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.textColor = .labelColor
-        contentStack.addArrangedSubview(titleLabel)
-
-        for field in section.fields where !field.value.isEmpty {
-            let fieldTitle = NSTextField(labelWithString: field.label.uppercased())
-            fieldTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            fieldTitle.textColor = .secondaryLabelColor
-            contentStack.addArrangedSubview(fieldTitle)
-
-            let value = NSTextField(wrappingLabelWithString: field.value)
-            value.isSelectable = true
-            value.font = NSFont.systemFont(ofSize: 13)
-            value.textColor = .labelColor
-            value.maximumNumberOfLines = 0
-            contentStack.addArrangedSubview(value)
-        }
-
-        let wrapper = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
-            contentStack.topAnchor.constraint(equalTo: wrapper.topAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor)
-        ])
-
-        box.contentView = wrapper
-        return box
     }
 }
