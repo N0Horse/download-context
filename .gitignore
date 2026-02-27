@@ -1,0 +1,5 @@
+# Local build artifacts
+/dist/
+
+# Local documentation drafts (do not publish)
+/docs/

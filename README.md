@@ -1,133 +1,84 @@
 # Ctx
 
-Ctx links downloaded files to their origin webpage (title + URL) plus an optional note, so you can later look up where a file came from.
-
-## What this project includes
-- `app-swift/`: macOS menu bar app (`Ctx.app`)
-- `cli/`: `ctx` command-line wrapper for daily use
-- `core-python/`: `ctx-core` engine (JSON command interface)
-- `tests/`: Python core tests
-- `scripts/`: build, packaging, and smoke-test helpers
-- `docs/`: JSON contract, permissions, release process
+Ctx is a macOS menu bar app that links downloaded files to their source webpage (title + URL) with an optional note.
 
 ## Requirements
-- macOS (Safari integration is part of MVP)
+- macOS
 - Python 3
-- Swift toolchain (only needed to run/build the app from source)
+- Swift toolchain
 
-Ctx may request macOS Automation permission to read Safari tab title/URL during capture.
-
-## From clone to first run
-
-### Option A: Run the CLI (fastest)
-1. Clone and enter the repo:
+## Quick Start
+1. Clone the repository:
 ```bash
 git clone <your-repo-url>
 cd download-context
 ```
-2. (Optional) use a separate local DB for development:
+
+2. Build the app bundle:
 ```bash
-export CTX_DB_PATH=/tmp/ctx-dev.sqlite
-```
-3. Run a command to confirm the tool works:
-```bash
-./cli/ctx search ""
-```
-4. Capture a recent download from Safari:
-```bash
-./cli/ctx capture
-```
-5. Look up a file later:
-```bash
-./cli/ctx lookup /absolute/path/to/file
+./scripts/build_app.sh
 ```
 
-### Option B: Run the macOS menu bar app
-1. Clone and enter the repo:
+3. Run the built app:
 ```bash
-git clone <your-repo-url>
-cd download-context
-```
-2. Start the app:
-```bash
-swift run --package-path app-swift Ctx
-```
-3. Use the menu bar icon to run Capture / Lookup / Search.
-4. On first capture, allow macOS Automation access for Safari if prompted.
-
-### Option C: Build distributable artifacts, then run
-1. Clone and enter the repo:
-```bash
-git clone <your-repo-url>
-cd download-context
-```
-2. Build packages:
-```bash
-./scripts/package_app.sh
-```
-3. Use generated outputs in `dist/`:
-- `Ctx.app.zip` for the app
-- `ctx-cli.zip` for the CLI
-
-## Quick start paths
-
-### Path 1: Use prebuilt release artifacts
-1. Build/package artifacts:
-```bash
-./scripts/package_app.sh
-```
-2. Use outputs in `dist/`:
-- `Ctx.app.zip` (menu bar app)
-- `ctx-cli.zip` (CLI bundle)
-- `ctx-core` (core executable)
-- `SHA256SUMS.txt` (checksums)
-
-### Path 2: Run the menu bar app from source
-```bash
-swift run --package-path app-swift Ctx
+open dist/Ctx.app
 ```
 
-### Path 3: Use the CLI from source
+4. Use the menu bar icon to capture and look up download context.
+
+5. On first capture, allow macOS Automation permission for Safari when prompted.
+
+## CLI Reference
+Run from repo root:
 ```bash
-export CTX_DB_PATH=/tmp/ctx-dev.sqlite  # optional override
-./cli/ctx capture
-./cli/ctx lookup /absolute/path/to/file.pdf
-./cli/ctx search "invoice"
-./cli/ctx open <capture-id>
-./cli/ctx reveal /absolute/path/to/file.pdf
-./cli/ctx reveal-id <capture-id>
+./cli/ctx <command> [options]
 ```
 
-### Path 4: Call the core engine directly (JSON output)
+### `capture`
+Capture the latest recent download and link it to the active Safari tab.
 ```bash
-python3 -m ctx_core search --q "" --limit 20
+./cli/ctx capture [--downloads-dir <path>] [--within <seconds>] [--note "<text>"] [--no-note] [--json]
 ```
-Run from repo root with `PYTHONPATH` including `core-python` if needed.
+- `--downloads-dir`: downloads folder to scan (default: `~/Downloads`)
+- `--within`: time window in seconds (default: `60`)
+- `--note`: optional note text
+- `--no-note`: skip interactive note prompt
+- `--json`: print raw JSON response
 
-## Common workflows
-- Capture latest download: `ctx capture`
-- Find origin for a local file: `ctx lookup <file_path>`
-- Search saved records: `ctx search <query>`
-- Open source page for a capture: `ctx open <capture-id>`
-
-## Database location
-App and CLI share the same SQLite database path resolution:
-1. `CTX_DB_PATH` (if set)
-2. `~/Library/Application Support/Ctx/ctx.sqlite`
-
-## Development and verification
-Run smoke tests:
+### `lookup`
+Look up saved context by file path.
 ```bash
-./scripts/run_smoke_tests.sh
+./cli/ctx lookup <file_path> [--json]
 ```
+- `--json`: print raw JSON response
 
-Run Python unit tests:
+### `search`
+Search saved capture records.
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -v
+./cli/ctx search <query> [--limit <n>] [--json]
+```
+- `--limit`: max results (default: `20`)
+- `--json`: print raw JSON response
+
+### `open`
+Open the source URL for a capture ID.
+```bash
+./cli/ctx open <capture_id>
 ```
 
-## Documentation
-- JSON command contract: `docs/json-contract.md`
-- Product/spec details: `docs/spec.md`
-- Permissions: `docs/permissions.md`
-- Release process: `docs/release.md`
+### `reveal`
+Reveal a local file in Finder.
+```bash
+./cli/ctx reveal <file_path>
+```
+
+### `reveal-id`
+Reveal the captured file path for a capture ID in Finder.
+```bash
+./cli/ctx reveal-id <capture_id>
+```
+
+## Notes
+- The built app is located at `dist/Ctx.app`.
+- Default database path: `~/Library/Application Support/Ctx/ctx.sqlite`.
+- You can override DB location with `CTX_DB_PATH`.
