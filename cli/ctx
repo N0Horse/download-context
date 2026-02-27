@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CORE_PYTHON = ROOT / "core-python"
+
+
+def run_osascript(script: str) -> str:
+    proc = subprocess.run(
+        ["osascript", "-e", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "AppleScript failed")
+    return proc.stdout.strip()
+
+
+def get_safari_context() -> tuple[str, str]:
+    title_script = 'tell application "Safari" to return name of current tab of front window'
+    url_script = 'tell application "Safari" to return URL of current tab of front window'
+    title = run_osascript(title_script)
+    url = run_osascript(url_script)
+    if not title or not url:
+        raise RuntimeError("Safari not available or no active tab.")
+    return title, url
+
+
+def invoke_core(arguments: list[str]) -> tuple[int, dict]:
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(CORE_PYTHON) + (os.pathsep + existing if existing else "")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "ctx_core", *arguments],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    raw = proc.stdout.strip() or "{}"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": {"code": "INVALID_CORE_RESPONSE", "message": raw, "details": {}},
+        }
+        return 2, payload
+    return proc.returncode, payload
+
+
+def print_error(payload: dict) -> int:
+    err = payload.get("error", {})
+    code = err.get("code", "UNKNOWN_ERROR")
+    msg = err.get("message", "unknown failure")
+    print(f"Error [{code}]: {msg}", file=sys.stderr)
+    return 1
+
+
+def cmd_capture(args: argparse.Namespace) -> int:
+    try:
+        title, url = get_safari_context()
+    except RuntimeError as exc:
+        print(f"Error [SAFARI_CONTEXT_MISSING]: {exc}", file=sys.stderr)
+        return 1
+
+    note = args.note
+    if note is None and not args.no_note:
+        note = input("Note (optional): ").strip() or None
+
+    rc, payload = invoke_core(
+        [
+            "capture",
+            "--downloads-dir",
+            args.downloads_dir,
+            "--within",
+            str(args.within),
+            "--origin-title",
+            title,
+            "--origin-url",
+            url,
+            "--source-app",
+            "ctx-cli",
+            *(["--note", note] if note else []),
+        ]
+    )
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return rc
+
+    if not payload.get("ok"):
+        return print_error(payload)
+
+    capture = payload["data"]["capture"]
+    print(f"Linked {capture['file_name']} -> {capture['origin_title']}")
+    print(capture["id"])
+    return 0
+
+
+def cmd_lookup(args: argparse.Namespace) -> int:
+    rc, payload = invoke_core(["lookup", "--path", args.file_path])
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return rc
+
+    if not payload.get("ok"):
+        return print_error(payload)
+
+    records = payload["data"]["records"]
+    if not records:
+        print("No context saved for this file.")
+        return 0
+
+    for record in records:
+        print(f"[{record['id']}] {record['origin_title']}")
+        print(f"  URL: {record['origin_url']}")
+        print(f"  File: {record['file_name']}")
+        print(f"  Captured: {record['created_at']}")
+        if record.get("note"):
+            print(f"  Note: {record['note']}")
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    rc, payload = invoke_core(["search", "--q", args.query, "--limit", str(args.limit)])
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return rc
+
+    if not payload.get("ok"):
+        return print_error(payload)
+
+    results = payload["data"]["results"]
+    if not results:
+        print("No results.")
+        return 0
+
+    for row in results:
+        note = row.get("note") or ""
+        print(f"{row['id']}  {row['file_name']}  {row['origin_title']}  {note}")
+    return 0
+
+
+def resolve_db_path() -> Path:
+    env_path = os.environ.get("CTX_DB_PATH", "").strip()
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return Path("~/Library/Application Support/Ctx/ctx.sqlite").expanduser().resolve()
+
+
+def get_capture(capture_id: str) -> dict | None:
+    db_path = resolve_db_path()
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT * FROM captures WHERE id = ?", (capture_id,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def cmd_open(args: argparse.Namespace) -> int:
+    record = get_capture(args.capture_id)
+    if not record:
+        print("Capture id not found.", file=sys.stderr)
+        return 1
+    subprocess.run(["open", record["origin_url"]], check=False)
+    print(record["origin_url"])
+    return 0
+
+
+def cmd_reveal(args: argparse.Namespace) -> int:
+    path = Path(args.file_path).expanduser().resolve()
+    if not path.exists():
+        print("File path not found.", file=sys.stderr)
+        return 1
+    subprocess.run(["open", "-R", str(path)], check=False)
+    return 0
+
+
+def cmd_reveal_id(args: argparse.Namespace) -> int:
+    record = get_capture(args.capture_id)
+    if not record:
+        print("Capture id not found.", file=sys.stderr)
+        return 1
+    path = Path(record["file_path_at_capture"]).expanduser()
+    subprocess.run(["open", "-R", str(path)], check=False)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ctx")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_capture = sub.add_parser("capture")
+    p_capture.add_argument("--downloads-dir", default="~/Downloads")
+    p_capture.add_argument("--within", type=int, default=60)
+    p_capture.add_argument("--note")
+    p_capture.add_argument("--no-note", action="store_true")
+    p_capture.add_argument("--json", action="store_true")
+
+    p_lookup = sub.add_parser("lookup")
+    p_lookup.add_argument("file_path")
+    p_lookup.add_argument("--json", action="store_true")
+
+    p_search = sub.add_parser("search")
+    p_search.add_argument("query")
+    p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--json", action="store_true")
+
+    p_open = sub.add_parser("open")
+    p_open.add_argument("capture_id")
+
+    p_reveal = sub.add_parser("reveal")
+    p_reveal.add_argument("file_path")
+
+    p_reveal_id = sub.add_parser("reveal-id")
+    p_reveal_id.add_argument("capture_id")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    if args.command == "capture":
+        return cmd_capture(args)
+    if args.command == "lookup":
+        return cmd_lookup(args)
+    if args.command == "search":
+        return cmd_search(args)
+    if args.command == "open":
+        return cmd_open(args)
+    if args.command == "reveal":
+        return cmd_reveal(args)
+    if args.command == "reveal-id":
+        return cmd_reveal_id(args)
+
+    print("Unknown command", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

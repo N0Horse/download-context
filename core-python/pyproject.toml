@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctx-core"
+version = "0.1.0"
+description = "Ctx core engine"
+requires-python = ">=3.10"
+readme = "README.md"
+authors = [{name = "Ctx"}]
+
+[project.scripts]
+ctx-core = "ctx_core.main:run"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ctx_core*"]
