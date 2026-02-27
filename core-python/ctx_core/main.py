@@ -12,6 +12,7 @@ from ctx_core.db import Database
 from ctx_core.downloads import find_newest_stable_download
 from ctx_core.errors import CtxError
 from ctx_core.hashing import sha256_file
+from ctx_core.reconcile import find_file_by_hash, resolve_scan_roots
 
 
 def ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +116,11 @@ def cmd_lookup(args: argparse.Namespace, db: Database) -> dict[str, Any]:
         ) from exc
 
     records = db.lookup_by_hash(file_hash, limit=args.limit)
+    if records:
+        # Keep lookup/search results aligned with the latest observed filename/path
+        # when users rename or move the file after capture.
+        db.refresh_observed_file_location(file_hash, str(path))
+        records = db.lookup_by_hash(file_hash, limit=args.limit)
     return ok(
         {
             "file_hash": file_hash,
@@ -126,12 +132,45 @@ def cmd_lookup(args: argparse.Namespace, db: Database) -> dict[str, Any]:
 
 def cmd_search(args: argparse.Namespace, db: Database) -> dict[str, Any]:
     records, backend = db.search_captures(args.q, limit=args.limit)
+    reconciled = 0
+
+    if args.reconcile_paths and records:
+        scan_roots = resolve_scan_roots(args.scan_root)
+        stale = [
+            record
+            for record in records
+            if not Path(record["file_path_at_capture"]).expanduser().exists()
+        ]
+        hash_to_path: dict[str, str | None] = {}
+
+        for record in stale[: args.reconcile_max_records]:
+            file_hash = record["file_hash"]
+            observed_path = hash_to_path.get(file_hash)
+            if file_hash not in hash_to_path:
+                located = find_file_by_hash(
+                    file_hash=file_hash,
+                    file_size_bytes=record["file_size_bytes"],
+                    scan_roots=scan_roots,
+                    max_seconds=args.reconcile_max_seconds,
+                    max_candidates=args.reconcile_max_candidates,
+                )
+                observed_path = str(located) if located else None
+                hash_to_path[file_hash] = observed_path
+
+            if observed_path and observed_path != record["file_path_at_capture"]:
+                db.refresh_observed_file_location(file_hash, observed_path)
+                reconciled += 1
+
+        if reconciled > 0:
+            records, backend = db.search_captures(args.q, limit=args.limit)
+
     return ok(
         {
             "query": args.q,
             "backend": backend,
             "results": records,
             "count": len(records),
+            "reconciled": reconciled,
         }
     )
 
@@ -155,6 +194,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search")
     p_search.add_argument("--q", required=True)
     p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument(
+        "--reconcile-paths",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    p_search.add_argument("--scan-root", action="append", default=[])
+    p_search.add_argument("--reconcile-max-seconds", type=float, default=8.0)
+    p_search.add_argument("--reconcile-max-candidates", type=int, default=2000)
+    p_search.add_argument("--reconcile-max-records", type=int, default=10)
 
     return parser
 

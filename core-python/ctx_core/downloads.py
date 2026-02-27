@@ -12,6 +12,10 @@ TEMP_SUFFIXES = {
     ".partial",
 }
 
+MIN_QUIET_SECONDS = 2.0
+STABILITY_CHECKS = 3
+STABILITY_SLEEP_SECONDS = 0.8
+
 
 @dataclass
 class CandidateResult:
@@ -26,10 +30,19 @@ def _is_temp_file(path: Path) -> bool:
     return any(lower_name.endswith(suffix) for suffix in TEMP_SUFFIXES)
 
 
-def _is_stable(path: Path, checks: int = 2, sleep_seconds: float = 0.35) -> bool:
+def _is_stable(
+    path: Path,
+    *,
+    checks: int = STABILITY_CHECKS,
+    sleep_seconds: float = STABILITY_SLEEP_SECONDS,
+    min_quiet_seconds: float = MIN_QUIET_SECONDS,
+) -> bool:
     try:
         previous = path.stat()
     except OSError:
+        return False
+
+    if (time.time() - previous.st_mtime) < min_quiet_seconds:
         return False
 
     for _ in range(checks):
@@ -41,6 +54,9 @@ def _is_stable(path: Path, checks: int = 2, sleep_seconds: float = 0.35) -> bool
         if current.st_size != previous.st_size or current.st_mtime_ns != previous.st_mtime_ns:
             return False
         previous = current
+
+    if (time.time() - previous.st_mtime) < min_quiet_seconds:
+        return False
     return True
 
 

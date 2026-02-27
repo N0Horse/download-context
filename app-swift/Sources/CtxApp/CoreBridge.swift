@@ -88,6 +88,12 @@ final class CoreBridge {
             }
         }
 
+        #if DEBUG
+        // In local Xcode debug runs, prefer source-mode core resolution so
+        // code changes in core-python are picked up immediately.
+        return nil
+        #endif
+
         let bundled = Bundle.main.executableURL?
             .deletingLastPathComponent()
             .appendingPathComponent("ctx-core")

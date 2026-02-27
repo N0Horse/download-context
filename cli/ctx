@@ -133,7 +133,12 @@ def cmd_lookup(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    rc, payload = invoke_core(["search", "--q", args.query, "--limit", str(args.limit)])
+    core_args = ["search", "--q", args.query, "--limit", str(args.limit)]
+    for scan_root in args.scan_root:
+        core_args.extend(["--scan-root", scan_root])
+    if args.no_reconcile_paths:
+        core_args.append("--no-reconcile-paths")
+    rc, payload = invoke_core(core_args)
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return rc
@@ -142,13 +147,18 @@ def cmd_search(args: argparse.Namespace) -> int:
         return print_error(payload)
 
     results = payload["data"]["results"]
+    reconciled = payload["data"].get("reconciled", 0)
     if not results:
         print("No results.")
         return 0
 
+    if reconciled:
+        print(f"Reconciled {reconciled} stale record(s).")
+
     for row in results:
         note = row.get("note") or ""
         print(f"{row['id']}  {row['file_name']}  {row['origin_title']}  {note}")
+        print(f"  Path: {row['file_path_at_capture']}")
     return 0
 
 
@@ -219,6 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search")
     p_search.add_argument("query")
     p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--scan-root", action="append", default=[])
+    p_search.add_argument("--no-reconcile-paths", action="store_true")
     p_search.add_argument("--json", action="store_true")
 
     p_open = sub.add_parser("open")

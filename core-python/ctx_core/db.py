@@ -52,17 +52,51 @@ class Database:
                 )
 
     def ensure_fts(self) -> bool:
+        expected_columns = {
+            "id",
+            "file_name",
+            "file_path_at_capture",
+            "origin_title",
+            "origin_url",
+            "note",
+        }
+
         try:
+            existing_columns = {
+                row["name"]
+                for row in self.conn.execute("PRAGMA table_info(captures_fts)").fetchall()
+            }
+            if existing_columns and existing_columns != expected_columns:
+                with self.conn:
+                    self.conn.execute("DROP TABLE IF EXISTS captures_fts")
+
             with self.conn:
                 self.conn.execute(
                     """
                     CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(
                       id UNINDEXED,
                       file_name,
+                      file_path_at_capture,
                       origin_title,
                       origin_url,
                       note
                     )
+                    """
+                )
+                self.conn.execute("DELETE FROM captures_fts")
+                self.conn.execute(
+                    """
+                    INSERT INTO captures_fts (
+                      id, file_name, file_path_at_capture, origin_title, origin_url, note
+                    )
+                    SELECT
+                      id,
+                      file_name,
+                      file_path_at_capture,
+                      origin_title,
+                      origin_url,
+                      coalesce(note, '')
+                    FROM captures
                     """
                 )
             return True
@@ -74,12 +108,15 @@ class Database:
             with self.conn:
                 self.conn.execute(
                     """
-                    INSERT INTO captures_fts (id, file_name, origin_title, origin_url, note)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO captures_fts (
+                      id, file_name, file_path_at_capture, origin_title, origin_url, note
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record["id"],
                         record["file_name"],
+                        record["file_path_at_capture"],
                         record["origin_title"],
                         record["origin_url"],
                         record.get("note") or "",
@@ -156,6 +193,32 @@ class Database:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def refresh_observed_file_location(self, file_hash: str, observed_path: str) -> None:
+        observed_name = Path(observed_path).name
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE captures
+                SET file_name = ?, file_path_at_capture = ?
+                WHERE file_hash = ?
+                """,
+                (observed_name, observed_path, file_hash),
+            )
+        try:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    UPDATE captures_fts
+                    SET file_name = ?, file_path_at_capture = ?
+                    WHERE id IN (
+                      SELECT id FROM captures WHERE file_hash = ?
+                    )
+                    """,
+                    (observed_name, observed_path, file_hash),
+                )
+        except sqlite3.OperationalError:
+            pass
+
     def search_captures(self, query: str, limit: int = 20) -> tuple[list[dict[str, Any]], str]:
         if query.strip() == "":
             rows = self.conn.execute(
@@ -174,22 +237,26 @@ class Database:
                 """,
                 (query, limit),
             ).fetchall()
-            return [dict(row) for row in rows], "fts5"
+            if rows:
+                return [dict(row) for row in rows], "fts5"
         except sqlite3.OperationalError:
-            like_q = f"%{query.lower()}%"
-            rows = self.conn.execute(
-                """
-                SELECT * FROM captures
-                WHERE lower(file_name) LIKE ?
-                   OR lower(origin_title) LIKE ?
-                   OR lower(origin_url) LIKE ?
-                   OR lower(coalesce(note, '')) LIKE ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (like_q, like_q, like_q, like_q, limit),
-            ).fetchall()
-            return [dict(row) for row in rows], "like"
+            pass
+
+        like_q = f"%{query.lower()}%"
+        rows = self.conn.execute(
+            """
+            SELECT * FROM captures
+            WHERE lower(file_name) LIKE ?
+               OR lower(file_path_at_capture) LIKE ?
+               OR lower(origin_title) LIKE ?
+               OR lower(origin_url) LIKE ?
+               OR lower(coalesce(note, '')) LIKE ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (like_q, like_q, like_q, like_q, like_q, limit),
+        ).fetchall()
+        return [dict(row) for row in rows], "like"
 
     def get_capture_by_id(self, capture_id: str) -> dict[str, Any] | None:
         row = self.conn.execute(

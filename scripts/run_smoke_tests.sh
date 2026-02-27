@@ -15,6 +15,7 @@ trap cleanup EXIT
 export CTX_DB_PATH="$TMP_DB"
 
 echo "smoke" > "$FILE"
+sleep 3
 
 echo "[1/3] capture"
 PYTHONPATH="$ROOT/core-python" python3 -m ctx_core capture \

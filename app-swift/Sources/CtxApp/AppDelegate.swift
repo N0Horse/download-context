@@ -72,8 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             showStructuredInfo(
                 "Capture Saved",
-                summary: "Context linked to the latest downloaded file.",
-                sections: [ResultSection(title: "Saved Record", fields: fields)]
+                summary: "Context saved for this file.",
+                sections: [ResultSection(title: "Record", fields: fields)]
             )
         } catch let e as CoreError {
             showError(e.code, e.message)
@@ -113,15 +113,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let summary: String
             if payload.count > 1 {
-                summary = "\(payload.count) records found. Showing the latest match."
+                summary = "\(payload.count) captures found for this file. Showing the most recent one."
             } else {
-                summary = "1 record found."
+                summary = "Context found for this file."
             }
 
             showStructuredInfo(
                 "Lookup Result",
                 summary: summary,
-                sections: [ResultSection(title: "Latest Record", fields: fields)]
+                sections: [ResultSection(title: "Record", fields: fields)]
             )
         } catch let e as CoreError {
             showError(e.code, e.message)
@@ -305,24 +305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeStructuredMessageView(summary: String, sections: [ResultSection]) -> NSView {
         let width: CGFloat = 700
-        let height: CGFloat = 420
-
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .noBorder
-        scroll.drawsBackground = false
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainerInset = NSSize(width: 14, height: 14)
+        let minHeight: CGFloat = 150
+        let maxHeight: CGFloat = sections.count <= 1 ? 300 : 420
+        let textWidth = width - 28
 
         let body = NSMutableAttributedString()
 
@@ -340,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
 
-        for section in sections {
+        for (index, section) in sections.enumerated() {
             let sectionTitleStyle = NSMutableParagraphStyle()
             sectionTitleStyle.paragraphSpacing = 10
             body.append(
@@ -383,22 +368,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
 
-            body.append(
-                NSAttributedString(
-                    string: "────────────────────────────────────────\n\n",
-                    attributes: [
-                        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                        .foregroundColor: NSColor.separatorColor
-                    ]
-                )
-            )
+            if index < sections.count - 1 {
+                body.append(NSAttributedString(string: "\n"))
+            }
         }
 
+        let estimatedRect = body.boundingRect(
+            with: NSSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let contentHeight = ceil(estimatedRect.height) + 28
+        let visibleHeight = min(maxHeight, max(minHeight, contentHeight))
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: visibleHeight))
+        scroll.hasVerticalScroller = contentHeight > visibleHeight + 1
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = false
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: contentHeight))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = false
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: width, height: contentHeight)
+        textView.maxSize = NSSize(width: width, height: contentHeight)
+        textView.textContainerInset = NSSize(width: 14, height: 14)
         textView.textStorage?.setAttributedString(body)
 
         if let container = textView.textContainer {
             container.widthTracksTextView = true
-            container.containerSize = NSSize(width: width - 28, height: CGFloat.greatestFiniteMagnitude)
+            container.containerSize = NSSize(width: textWidth, height: CGFloat.greatestFiniteMagnitude)
             container.lineFragmentPadding = 0
             container.lineBreakMode = .byCharWrapping
         }
