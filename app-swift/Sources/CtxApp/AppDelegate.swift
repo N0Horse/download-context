@@ -1,6 +1,17 @@
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private struct ResultField {
+        let label: String
+        let value: String
+    }
+
+    private struct ResultSection {
+        let title: String
+        let fields: [ResultField]
+    }
+
     private var statusItem: NSStatusItem!
     private let bridge = CoreBridge()
 
@@ -8,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let withinKey = "settings.within_seconds"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Menu bar apps do not need window tabbing; disabling it avoids
+        // AppKit tab-index warnings in package-run/dev mode.
+        NSWindow.allowsAutomaticWindowTabbing = false
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "Ctx"
         statusItem.menu = buildMenu()
@@ -45,7 +60,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 originURL: safari.url,
                 note: note
             )
-            showInfo("Capture Saved", "Linked \(payload.capture.fileName) -> \(payload.capture.originTitle)")
+            let record = payload.capture
+            var fields = [
+                ResultField(label: "File Name", value: record.fileName),
+                ResultField(label: "File Path", value: record.filePathAtCapture),
+                ResultField(label: "Source Tab", value: record.originTitle),
+                ResultField(label: "Source URL", value: record.originURL)
+            ]
+            if let savedNote = record.note, !savedNote.isEmpty {
+                fields.append(ResultField(label: "Note", value: savedNote))
+            }
+            showStructuredInfo(
+                "Capture Saved",
+                summary: "Context linked to the latest downloaded file.",
+                sections: [ResultSection(title: "Saved Record", fields: fields)]
+            )
         } catch let e as CoreError {
             showError(e.code, e.message)
         } catch {
@@ -72,14 +101,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let first = payload.records[0]
-            var body = "\(first.originTitle)\n\(first.originURL)\n"
-            if let note = first.note, !note.isEmpty {
-                body += "\nNote: \(note)\n"
+            var fields = [
+                ResultField(label: "File Name", value: first.fileName),
+                ResultField(label: "File Path", value: first.filePathAtCapture),
+                ResultField(label: "Source Tab", value: first.originTitle),
+                ResultField(label: "Source URL", value: first.originURL)
+            ]
+            if let savedNote = first.note, !savedNote.isEmpty {
+                fields.append(ResultField(label: "Note", value: savedNote))
             }
+
+            let summary: String
             if payload.count > 1 {
-                body += "\n\(payload.count) records found (showing latest)."
+                summary = "\(payload.count) records found. Showing the latest match."
+            } else {
+                summary = "1 record found."
             }
-            showInfo("Lookup Result", body)
+
+            showStructuredInfo(
+                "Lookup Result",
+                summary: summary,
+                sections: [ResultSection(title: "Latest Record", fields: fields)]
+            )
         } catch let e as CoreError {
             showError(e.code, e.message)
         } catch {
@@ -99,9 +142,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            let lines = payload.results.prefix(10).map { "- \($0.fileName): \($0.originTitle)" }
-            let summary = lines.joined(separator: "\n")
-            showInfo("Search Results", "Backend: \(payload.backend)\n\n\(summary)")
+            let sections = payload.results.prefix(10).enumerated().map { idx, record in
+                var fields = [
+                    ResultField(label: "File Name", value: record.fileName),
+                    ResultField(label: "File Path", value: record.filePathAtCapture),
+                    ResultField(label: "Source Tab", value: record.originTitle),
+                    ResultField(label: "Source URL", value: record.originURL)
+                ]
+                if let savedNote = record.note, !savedNote.isEmpty {
+                    fields.append(ResultField(label: "Note", value: savedNote))
+                }
+                return ResultSection(title: "Result \(idx + 1)", fields: fields)
+            }
+            showStructuredInfo(
+                "Search Results",
+                summary: "Showing \(min(payload.count, 10)) of \(payload.count) result(s)",
+                sections: sections
+            )
         } catch let e as CoreError {
             showError(e.code, e.message)
         } catch {
@@ -193,7 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showInfo(_ title: String, _ message: String) {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = message
+        alert.accessoryView = makeReadableMessageView(message)
+        alert.addButton(withTitle: "OK")
         alert.runModal()
     }
 
@@ -201,7 +259,133 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Error [\(code)]"
-        alert.informativeText = message
+        alert.accessoryView = makeReadableMessageView(message)
+        alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func makeReadableMessageView(_ message: String) -> NSView {
+        let width: CGFloat = 520
+        let height: CGFloat = 240
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = false
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.string = message
+
+        if let container = textView.textContainer {
+            container.widthTracksTextView = true
+            container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            container.lineBreakMode = .byWordWrapping
+        }
+
+        scroll.documentView = textView
+        return scroll
+    }
+
+    private func showStructuredInfo(_ title: String, summary: String, sections: [ResultSection]) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.accessoryView = makeStructuredMessageView(summary: summary, sections: sections)
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func makeStructuredMessageView(summary: String, sections: [ResultSection]) -> NSView {
+        let width: CGFloat = 640
+        let height: CGFloat = 380
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .bezelBorder
+        scroll.drawsBackground = false
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: width - 16, height: 10))
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        content.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: content.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: content.widthAnchor)
+        ])
+
+        let summaryLabel = NSTextField(wrappingLabelWithString: summary)
+        summaryLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.maximumNumberOfLines = 0
+        stack.addArrangedSubview(summaryLabel)
+
+        for section in sections {
+            stack.addArrangedSubview(makeSectionView(section))
+        }
+
+        scroll.documentView = content
+        return scroll
+    }
+
+    private func makeSectionView(_ section: ResultSection) -> NSView {
+        let box = NSBox()
+        box.boxType = .custom
+        box.borderWidth = 1
+        box.cornerRadius = 8
+        box.borderColor = .separatorColor
+        box.fillColor = .clear
+        box.contentViewMargins = NSSize(width: 12, height: 10)
+
+        let contentStack = NSStackView()
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 8
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: section.title)
+        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        contentStack.addArrangedSubview(titleLabel)
+
+        for field in section.fields where !field.value.isEmpty {
+            let fieldTitle = NSTextField(labelWithString: field.label.uppercased())
+            fieldTitle.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            fieldTitle.textColor = .secondaryLabelColor
+            contentStack.addArrangedSubview(fieldTitle)
+
+            let value = NSTextField(wrappingLabelWithString: field.value)
+            value.isSelectable = true
+            value.font = NSFont.systemFont(ofSize: 13)
+            value.textColor = .labelColor
+            value.maximumNumberOfLines = 0
+            contentStack.addArrangedSubview(value)
+        }
+
+        let wrapper = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: wrapper.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor)
+        ])
+
+        box.contentView = wrapper
+        return box
     }
 }
