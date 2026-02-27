@@ -2,10 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+mkdir -p "$ROOT/dist"
+cp "$ROOT/cli/ctx" "$ROOT/dist/ctx"
+chmod +x "$ROOT/dist/ctx"
 
-mkdir -p dist
-cp cli/ctx dist/ctx
-chmod +x dist/ctx
-
-echo "Built CLI at dist/ctx"
+echo "Built CLI at $ROOT/dist/ctx"
