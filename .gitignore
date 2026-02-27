@@ -1,5 +1,21 @@
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
+
 # Local build artifacts
 /dist/
+/app-swift/.build/
+/app-swift/.swiftpm/
+*.dSYM/
 
 # Local documentation drafts (do not publish)
 /docs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local automation file (do not publish)
+/Makefile
+**/Makefile
