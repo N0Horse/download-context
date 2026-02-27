@@ -10,7 +10,7 @@ Ctx is a macOS menu bar app that links downloaded files to their source webpage 
 ## Quick Start
 1. Clone the repository:
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/N0Horse/download-context
 cd download-context
 ```
 
